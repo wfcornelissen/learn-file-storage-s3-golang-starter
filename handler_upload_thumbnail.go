@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -28,10 +29,37 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
 	// TODO: implement the upload here
+	const maxMemory = 10 << 20
+	r.ParseMultipartForm(maxMemory)
+
+	fileData, fileHeaders, err := r.FormFile("thumbnail")
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Couldnt read from FormFile", err)
+	}
+
+	mediaType := fileHeaders.Header.Get("Content-Type")
+
+	fileDataByte, err := io.ReadAll(fileData)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error reading fileData", err)
+	}
+
+	videoMetadata, err := cfg.db.GetVideo(videoID)
+	if videoMetadata.UserID != userID {
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+	}
+
+	newThumb := thumbnail{
+		data:      fileDataByte,
+		mediaType: mediaType,
+	}
+
+	videoThumbnails[videoID] = newThumb
+
+	videoMetadata.ThumbnailURL = "http://localhost:<8091>/api/thumbnails/{videoID}"
 
 	respondWithJSON(w, http.StatusOK, struct{}{})
 }
