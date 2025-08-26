@@ -59,7 +59,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	videoThumbnails[videoID] = newThumb
 
-	videoMetadata.ThumbnailURL = "http://localhost:<8091>/api/thumbnails/{videoID}"
+	thumbnailURL := fmt.Sprintf("http://localhost:8091/api/thumbnails/%s", videoID)
+	videoMetadata.ThumbnailURL = &thumbnailURL
 
-	respondWithJSON(w, http.StatusOK, struct{}{})
+	err = cfg.db.UpdateVideo(videoMetadata)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to update database", err)
+	}
+
+	respondWithJSON(w, http.StatusOK, videoMetadata)
 }
