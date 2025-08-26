@@ -35,14 +35,19 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	const maxMemory = 10 << 20
 	r.ParseMultipartForm(maxMemory)
 
-	fileData, fileHeaders, err := r.FormFile("thumbnail")
+	file, fileHeaders, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldnt read from FormFile", err)
 	}
+	defer file.Close()
 
 	mediaType := fileHeaders.Header.Get("Content-Type")
+	if mediaType == "" {
+		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
+		return
+	}
 
-	fileDataByte, err := io.ReadAll(fileData)
+	fileData, err := io.ReadAll(file)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error reading fileData", err)
 	}
@@ -53,7 +58,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	newThumb := thumbnail{
-		data:      fileDataByte,
+		data:      fileData,
 		mediaType: mediaType,
 	}
 
@@ -64,6 +69,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
+		delete(videoThumbnails, videoID)
 		respondWithError(w, http.StatusInternalServerError, "Failed to update database", err)
 	}
 
