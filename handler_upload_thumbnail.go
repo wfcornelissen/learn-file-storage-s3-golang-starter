@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -33,8 +35,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
-
-	// TODO: implement the upload here
 
 	const maxMemory = 10 << 20 //10MB
 	err = r.ParseMultipartForm(maxMemory)
@@ -71,6 +71,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	key := make([]byte, 32)
+	rand.Read(key)
+	videoIDString = base64.RawURLEncoding.EncodeToString(key)
 	filePath := filepath.Join(cfg.assetsRoot, videoIDString+ext)
 
 	fileOnDisk, err := os.Create(filePath)
