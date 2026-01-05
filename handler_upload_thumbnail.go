@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -44,32 +46,53 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, 501, "Error getting file data", err)
+		return
 	}
+	defer file.Close()
 
-	mediaType := header.Header.Get("Content-Type")
-
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, 501, "Error reading file data", err)
+	var ext string
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
+	switch mediaType {
+	case "image/jpeg":
+		ext = ".jpeg"
+	case "image/png":
+		ext = ".png"
+	default:
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", err)
 	}
-
-	stringData := base64.StdEncoding.EncodeToString(fileData)
-
-	dataURL := fmt.Sprintf("data:%v;base64,%v", mediaType, stringData)
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, 501, "Couldn't get video", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video", err)
+		return
 	}
 	if video.CreateVideoParams.UserID != userID {
-		respondWithError(w, http.StatusUnauthorized, "You are not the owner", err)
+		respondWithError(w, http.StatusUnauthorized, "You are not the owner", nil)
+		return
 	}
 
-	video.ThumbnailURL = &dataURL
+	filePath := filepath.Join(cfg.assetsRoot, videoIDString+ext)
+
+	fileOnDisk, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to create file.", err)
+		return
+	}
+	defer fileOnDisk.Close()
+
+	_, err = io.Copy(fileOnDisk, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't write data to file", err)
+		return
+	}
+
+	thumbnailURL := "http://localhost:" + cfg.port + "/assets/" + videoIDString + ext
+	video.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to update video", err)
+		return
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
