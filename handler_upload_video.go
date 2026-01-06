@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
+	"path"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -80,6 +84,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to fetch aspect ratio:\n%v\n", err)
+		return
+	}
+
+	switch aspectRatio {
+	case "16:9":
+		videoIDString = path.Join("landscape", videoIDString)
+	case "9:16":
+		videoIDString = path.Join("portrait", videoIDString)
+	default:
+		videoIDString = path.Join("other", videoIDString)
+	}
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &videoIDString,
@@ -100,4 +119,45 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+
+	buffer := &bytes.Buffer{}
+	cmd.Stdout = buffer
+
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("failed to run command:\n%v\n", err)
+	}
+
+	type ffprobeOutput struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	var output ffprobeOutput
+	err = json.Unmarshal(buffer.Bytes(), &output)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal:\n%v\n", err)
+	}
+
+	if len(output.Streams) == 0 {
+		return "", fmt.Errorf("no video streams found")
+	}
+
+	width := float64(output.Streams[0].Width)
+	height := float64(output.Streams[0].Height)
+	ratio := width / height
+
+	const epsilon = 0.1
+	if ratio > 16.0/9.0-epsilon && ratio < 16.0/9.0+epsilon {
+		return "16:9", nil
+	} else if ratio > 9.0/16.0-epsilon && ratio < 9.0/16.0+epsilon {
+		return "9:16", nil
+	}
+	return "other", nil
 }
