@@ -63,6 +63,9 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "Invalid file", err)
 		return
 	}
+	if mediaType != "video/mp4" {
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", fmt.Errorf("Invalid file type selected"))
+	}
 
 	tempFile, err := os.CreateTemp("", "tubely-upload.mp4")
 	if err != nil {
@@ -90,6 +93,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	processedTempFilePath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to process video for fast start", err)
+		return
+	}
+	processedFile, err := os.Open(processedTempFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed opening processed video", err)
+		return
+	}
+	defer os.Remove(processedTempFilePath)
+	defer processedFile.Close()
+
 	switch aspectRatio {
 	case "16:9":
 		videoIDString = path.Join("landscape", videoIDString)
@@ -102,7 +118,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &videoIDString,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &mediaType,
 	})
 	if err != nil {
@@ -160,4 +176,17 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "9:16", nil
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	newFilePath := filePath + ".processing"
+
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", newFilePath)
+
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("Failed to run command")
+	}
+
+	return newFilePath, nil
 }
