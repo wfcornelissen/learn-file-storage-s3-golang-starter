@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -128,10 +130,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Failed to upload to S3", err)
 		return
 	}
+	bucketKey := cfg.s3Bucket + "," + processedFile.Name()
+	video.VideoURL = &bucketKey
 
-	newURL, err := generatePresignedURL(cfg.s3Client, cfg.s3Bucket, processedFile.Name(), 60)
-
-	video.VideoURL = &newURL
+	presignedVideo, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to presign video", err)
+	}
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
@@ -206,4 +211,19 @@ func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime ti
 	}
 
 	return preSignedReq.URL, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	split := strings.Split(*video.VideoURL, ",")
+	bucket := split[0]
+	key := split[1]
+
+	presignedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, time.Duration(10*time.Minute))
+	if err != nil {
+		return database.Video{}, err
+	}
+
+	video.VideoURL = &presignedURL
+
+	return video, nil
 }
